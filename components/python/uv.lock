@@ -53,18 +53,25 @@ wheels = [
 ]
 
 [[package]]
-name = "assemblyai"
-version = "0.48.0"
+name = "cartesia"
+version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "sniffio" },
     { name = "typing-extensions" },
-    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/ff/341e14cd5cfee8a984506706364ab74d856815bca3ce47b01f36c91dcd7a/assemblyai-0.48.0.tar.gz", hash = "sha256:adbd62698d0c810a02f8db0e6dfdc004351fd3150d9b6940b1794cf6c865855d", size = 55898, upload-time = "2025-12-01T18:25:44.494Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/cd/8841344c7753667f00357abdafdb3417a7ba86abdb7de43e93b6c09ea154/cartesia-4.2.0.tar.gz", hash = "sha256:c36c905f8a459eafaa555dc75d811f2d47770bc4a784e59b9428f3668248ac99", size = 342000, upload-time = "2026-09-02T21:35:03.479Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/67/eebb610f731efc94e773202c7dde8a8a8076aa8ca7afe761f623a3246bcb/assemblyai-0.48.0-py3-none-any.whl", hash = "sha256:96ee9a51d4515e4bd4cad4902716cdb08e44603c33acc937ed92acf0bdff67db", size = 51981, upload-time = "2025-12-01T18:25:43.419Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/52/eb40886f218f8613f1fd62d3aa2d3d92595bd1eca8c1a2ecfed6d4dcf4e2/cartesia-4.2.0-py3-none-any.whl", hash = "sha256:8ad6648670819da99e43722b52151ba0b050eb1898da485af8f3767f24b43715", size = 220715, upload-time = "2026-09-02T21:35:05.076Z" },
+]
+
+[package.optional-dependencies]
+websockets = [
+    { name = "websockets" },
 ]
 
 [[package]]
@@ -774,6 +781,7 @@ name = "python-voice-agent"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cartesia", extra = ["websockets"] },
     { name = "fastapi" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -788,9 +796,6 @@ dependencies = [
 anthropic = [
     { name = "langchain-anthropic" },
 ]
-assemblyai = [
-    { name = "assemblyai" },
-]
 elevenlabs = [
     { name = "elevenlabs" },
 ]
@@ -803,7 +808,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "assemblyai", marker = "extra == 'assemblyai'" },
+    { name = "cartesia", extras = ["websockets"], specifier = "==4.2.0" },
     { name = "elevenlabs", marker = "extra == 'elevenlabs'" },
     { name = "fastapi", specifier = ">=0.123.5" },
     { name = "langchain" },
@@ -815,7 +820,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets" },
 ]
-provides-extras = ["assemblyai", "elevenlabs", "anthropic"]
+provides-extras = ["elevenlabs", "anthropic"]
 
 [package.metadata.requires-dev]
 dev = [

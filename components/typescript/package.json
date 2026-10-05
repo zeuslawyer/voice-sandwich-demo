@@ -6,9 +6,11 @@
   "scripts": {
     "server": "tsx src/index.ts",
     "build": "tsc",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cartesia/cartesia-js": "4.2.0",
     "@ericedouard/vad-node-realtime": "^0.2.0",
     "@hono/node-server": "^1.19.13",
     "@hono/node-ws": "^1.2.0",

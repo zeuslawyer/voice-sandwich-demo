@@ -47,62 +47,32 @@ class UserInputEvent:
         return cls(type="user_input", audio=audio, ts=_now_ms())
 
 
+TurnType = Literal[
+    "turn.start", "turn.update", "turn.eager_end", "turn.resume", "turn.end"
+]
+
+
 @dataclass
-class STTChunkEvent:
+class TurnEvent:
     """
-    Event emitted during speech-to-text processing for partial transcription results.
+    One turn event from Cartesia Ink 2 speech-to-text, passed to the browser as-is.
 
-    STT services often provide incremental results as they process audio.
-    These chunks allow for real-time display of transcription progress to the user,
-    improving perceived responsiveness even before the final transcript is ready.
+    A "turn" is one stretch of the user talking. Ink 2 detects it and emits:
+    turn.start -> turn.update (repeats) -> [turn.eager_end -> turn.resume] -> turn.end
+
+    transcript: the turn's text so far. It only grows and is never revised,
+    and turn.end carries the final text. Empty on turn.start and turn.resume.
     """
 
-    type: Literal["stt_chunk"]
-
+    type: TurnType
     transcript: str
-    """
-    Partial transcript text from the STT service.
-    This may be revised as more audio context becomes available.
-    Not guaranteed to be the final transcription.
-    """
-
     ts: int
     """Unix timestamp (milliseconds since epoch) when the event was created."""
 
     @classmethod
-    def create(cls, transcript: str) -> "STTChunkEvent":
-        """Factory method to create an STTChunkEvent event with current timestamp."""
-        return cls(type="stt_chunk", transcript=transcript, ts=_now_ms())
-
-
-@dataclass
-class STTOutputEvent:
-    """
-    Event emitted when speech-to-text processing completes for a turn.
-
-    This represents the final, formatted transcription of the user's speech.
-    Unlike STTChunkEvent, this is the complete and finalized transcript that will
-    be sent to the agent for processing.
-    """
-
-    type: Literal["stt_output"]
-
-    transcript: str
-    """
-    Final, complete transcript of the user's speech for this turn.
-    This is the text that will be processed by the LLM agent.
-    """
-
-    ts: int
-    """Unix timestamp (milliseconds since epoch) when the event was created."""
-
-    @classmethod
-    def create(cls, transcript: str) -> "STTOutputEvent":
-        """Factory method to create an STTOutputEvent event with current timestamp."""
-        return cls(type="stt_output", transcript=transcript, ts=_now_ms())
-
-
-STTEvent = Union[STTChunkEvent, STTOutputEvent]
+    def create(cls, type: TurnType, transcript: str = "") -> "TurnEvent":
+        """Factory method to create a TurnEvent with current timestamp."""
+        return cls(type=type, transcript=transcript, ts=_now_ms())
 
 
 @dataclass
@@ -257,16 +227,14 @@ class TTSChunkEvent:
         return cls(type="tts_chunk", audio=audio, ts=_now_ms())
 
 
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent]
+VoiceAgentEvent = Union[UserInputEvent, TurnEvent, AgentEvent, TTSChunkEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
     """Convert a VoiceAgentEvent to a JSON-serializable dictionary."""
     if isinstance(event, UserInputEvent):
         return {"type": event.type, "ts": event.ts}
-    elif isinstance(event, STTChunkEvent):
-        return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
-    elif isinstance(event, STTOutputEvent):
+    elif isinstance(event, TurnEvent):
         return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
     elif isinstance(event, AgentChunkEvent):
         return {"type": event.type, "text": event.text, "ts": event.ts}

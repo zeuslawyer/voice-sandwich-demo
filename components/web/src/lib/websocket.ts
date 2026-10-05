@@ -26,20 +26,21 @@ export function createVoiceSession(): VoiceSession {
     const turn = get(currentTurn);
 
     switch (event.type) {
-      case "stt_chunk":
-        if (!turn.active) {
-          // New turn - save previous waterfall data and reset
-          const prevTurn = get(currentTurn);
-          if (prevTurn.turnStartTs) {
-            waterfallData.set({ ...prevTurn });
-          }
-          currentTurn.startTurn(event.ts);
+      case "turn.start":
+        // TODO:@zeuslawyer barge-in handling to be added (e.g. audioPlayback.stop()).
+        // Keep the previous turn's timings on screen, then start a new turn.
+        if (turn.turnStartTs) {
+          waterfallData.set({ ...turn });
         }
-        currentTurn.sttStart(event.ts);
+        currentTurn.startTurn(event.ts);
+        break;
+
+      case "turn.update":
         currentTurn.sttChunk(event.transcript);
         break;
 
-      case "stt_output":
+      case "turn.end":
+        if (!event.transcript) break;
         currentTurn.sttEnd(event.ts, event.transcript);
         activities.add("stt", "Transcription", event.transcript);
         break;

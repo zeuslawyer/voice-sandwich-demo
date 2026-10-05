@@ -1,7 +1,16 @@
 // Server event types
 export type ServerEvent =
-  | { type: "stt_chunk"; ts: number; transcript: string }
-  | { type: "stt_output"; ts: number; transcript: string }
+  // Cartesia Ink 2 turn events, forwarded by the backend as-is
+  | {
+      type:
+        | "turn.start"
+        | "turn.update"
+        | "turn.eager_end"
+        | "turn.resume"
+        | "turn.end";
+      ts: number;
+      transcript: string;
+    }
   | { type: "agent_chunk"; ts: number; text: string }
   | {
       type: "tool_call";

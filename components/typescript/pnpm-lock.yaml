@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@cartesia/cartesia-js':
+        specifier: 4.2.0
+        version: 4.2.0(ws@8.21.0)
       '@ericedouard/vad-node-realtime':
         specifier: ^0.2.0
         version: 0.2.0
@@ -108,6 +111,14 @@ packages:
   '@babel/runtime@7.28.4':
     resolution: {integrity: sha512-Q/N6JNWvIvPnLDvjlE1OUBLPQHH6l3CltCEsHIujp45zQUSSh8K+gHnaEX45yAT1nyngnINhvWtzN+Nb9D8RAQ==}
     engines: {node: '>=6.9.0'}
+
+  '@cartesia/cartesia-js@4.2.0':
+    resolution: {integrity: sha512-v5djlNl226LSYg9Q/TecHd7ClK8He6CeXtp3uCxdiK500WMgPXkOSdd5AxokWypQDkFdiGj54455oKFNFeq5jw==}
+    peerDependencies:
+      ws: ^8.18.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
@@ -1134,6 +1145,10 @@ snapshots:
       zod: 4.1.13
 
   '@babel/runtime@7.28.4': {}
+
+  '@cartesia/cartesia-js@4.2.0(ws@8.21.0)':
+    optionalDependencies:
+      ws: 8.21.0
 
   '@cfworker/json-schema@4.1.1': {}
 

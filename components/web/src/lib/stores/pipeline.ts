@@ -25,11 +25,8 @@ function createTurnStore() {
         ...initialTurnState,
         active: true,
         turnStartTs: ts,
+        sttStartTs: ts,
       });
-    },
-
-    sttStart(ts: number) {
-      update((t) => ({ ...t, sttStartTs: t.sttStartTs ?? ts }));
     },
 
     sttEnd(ts: number, transcript: string) {

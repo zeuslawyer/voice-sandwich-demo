@@ -3,6 +3,7 @@ name = "python-voice-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "cartesia[websockets]==4.2.0",
     "fastapi>=0.123.5",
     "langchain",
     "langchain-anthropic>=1.2.0",
@@ -14,7 +15,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-assemblyai = ["assemblyai"]
 elevenlabs = ["elevenlabs"]
 anthropic = ["langchain-anthropic"]
 

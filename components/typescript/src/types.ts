@@ -36,48 +36,25 @@ export namespace VoiceAgentEvent {
   }
 
   /**
-   * Event emitted during speech-to-text processing for partial transcription results.
+   * One turn event from Cartesia Ink 2 speech-to-text, passed to the browser as-is.
    *
-   * STT services often provide incremental results as they process audio.
-   * These chunks allow for real-time display of transcription progress to the user,
-   * improving perceived responsiveness even before the final transcript is ready.
+   * A "turn" is one stretch of the user talking. Ink 2 detects it and emits:
+   * turn.start -> turn.update (repeats) -> [turn.eager_end -> turn.resume] -> turn.end
    */
-  export interface STTChunk extends BaseEvent {
-    readonly type: "stt_chunk";
+  export interface TurnEvent extends BaseEvent {
+    readonly type:
+      | "turn.start"
+      | "turn.update"
+      | "turn.eager_end"
+      | "turn.resume"
+      | "turn.end";
 
     /**
-     * Partial transcript text from the STT service.
-     * This may be revised as more audio context becomes available.
-     * Not guaranteed to be the final transcription.
+     * The turn's text so far. It only grows and is never revised, and
+     * turn.end carries the final text. Empty on turn.start and turn.resume.
      */
     transcript: string;
   }
-
-  /**
-   * Event emitted when speech-to-text processing completes for a turn.
-   *
-   * This represents the final, formatted transcription of the user's speech.
-   * Unlike STTChunk, this is the complete and finalized transcript that will
-   * be sent to the agent for processing.
-   */
-  export interface STTOutput extends BaseEvent {
-    readonly type: "stt_output";
-
-    /**
-     * Final, complete transcript of the user's speech for this turn.
-     * This is the text that will be processed by the LLM agent.
-     */
-    transcript: string;
-  }
-
-  /**
-   * Union type representing all speech-to-text related events.
-   *
-   * This type encompasses both partial transcription results (STTChunk) and
-   * final transcription output (STTOutput) from the STT processing stage.
-   * It allows for type-safe handling of all STT events in the voice agent pipeline.
-   */
-  export type STTEvent = STTChunk | STTOutput;
 
   /**
    * Event emitted during agent response generation for streaming text chunks.
@@ -204,7 +181,7 @@ export namespace VoiceAgentEvent {
  *     case "user_input":
  *       processAudio(event.audio);
  *       break;
- *     case "stt_output":
+ *     case "turn.end":
  *       sendToAgent(event.transcript);
  *       break;
  *     // ... handle other event types
@@ -214,6 +191,6 @@ export namespace VoiceAgentEvent {
  */
 export type VoiceAgentEvent =
   | VoiceAgentEvent.UserInput
-  | VoiceAgentEvent.STTEvent
+  | VoiceAgentEvent.TurnEvent
   | VoiceAgentEvent.AgentEvent
   | VoiceAgentEvent.TTSChunk;

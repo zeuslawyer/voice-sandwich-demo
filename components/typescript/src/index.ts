@@ -17,7 +17,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { CARTESIA_TTS_SYSTEM_PROMPT, CartesiaTTS } from "./cartesia";
-import { AssemblyAISTT } from "./assemblyai/index";
+import Cartesia from "@cartesia/cartesia-js";
 import type { VoiceAgentEvent } from "./types";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,6 +76,8 @@ Available cheeses: swiss, cheddar, provolone.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 `;
 
+const cartesia = new Cartesia({ apiKey: process.env.CARTESIA_API_KEY });
+
 const agent = createAgent({
   model: "claude-haiku-4-5",
   tools: [addToOrder, confirmOrder],
@@ -84,74 +86,57 @@ const agent = createAgent({
 });
 
 /**
- * Transform stream: Audio (Uint8Array) → Voice Events (VoiceAgentEvent)
+ * Transform stream: Audio (Uint8Array) → Turn events, via Cartesia Ink 2.
  *
- * This function takes a stream of audio chunks and sends them to AssemblyAI for STT.
- *
- * It uses a producer-consumer pattern where:
- * - Producer: Reads audio chunks from audioStream and sends them to AssemblyAI
- * - Consumer: Receives transcription events from AssemblyAI and yields them
- *
- * @param audioStream - Async iterator of PCM audio bytes (16-bit, mono, 16kHz)
- * @returns Async generator yielding STT events (stt_chunk for partials, stt_output for final transcripts)
+ * @param audioStream - PCM audio from the browser (16-bit, mono, 16kHz)
+ * @returns Async generator yielding a TurnEvent for each Ink 2 turn.* message
  */
 async function* sttStream(
   audioStream: AsyncIterable<Uint8Array>
 ): AsyncGenerator<VoiceAgentEvent> {
-  const stt = new AssemblyAISTT({ sampleRate: 16000 });
-  const passthrough = writableIterator<VoiceAgentEvent>();
-
-  /**
-   * Promise that pumps audio chunks to AssemblyAI.
-   *
-   * This runs concurrently with the consumer, continuously reading audio
-   * chunks from the input stream and forwarding them to AssemblyAI.
-   * This allows transcription to begin before all audio has arrived.
-   */
-  const producer = iife(async () => {
-    try {
-      // Stream each audio chunk to AssemblyAI as it arrives
-      for await (const audioChunk of audioStream) {
-        await stt.sendAudio(audioChunk);
-      }
-    } finally {
-      // Signal to AssemblyAI that audio streaming is complete
-      await stt.close();
-    }
+  const ws = cartesia.stt.autoFinalize.websocket({
+    model: "ink-2",
+    encoding: "pcm_s16le",
+    sample_rate: 16000,
   });
 
-  /**
-   * Promise that receives transcription events from AssemblyAI.
-   *
-   * This runs concurrently with the producer, listening for STT events
-   * and pushing them into the passthrough iterator for downstream stages.
-   */
-  const consumer = iife(async () => {
-    for await (const event of stt.receiveEvents()) {
-      passthrough.push(event);
+  // Runs alongside the receive loop below, so transcripts arrive while the
+  // user is still talking.
+  const producer = iife(async () => {
+    try {
+      for await (const audioChunk of audioStream) {
+        ws.sendRaw(audioChunk);
+      }
+    } finally {
+      // Ask Ink 2 to finish any buffered audio. It closes the socket when
+      // done, which ends the receive loop.
+      ws.send({ type: "close" });
     }
   });
 
   try {
-    // Yield events as they arrive from the consumer
-    yield* passthrough;
+    for await (const e of ws.stream()) {
+      if (e.type === "error") {
+        console.error("Ink 2 error:", e.error.message);
+      } else if (e.type === "message") {
+        const m = e.message;
+        if (m.type === "connected" || m.type === "error") continue;
+        // turn.start and turn.resume carry no text.
+        const transcript = "transcript" in m ? m.transcript : "";
+        yield { type: m.type, transcript, ts: Date.now() };
+      }
+    }
   } finally {
-    // Wait for the producer and consumer to complete when cleaning up
-    await Promise.all([producer, consumer]);
+    await producer;
   }
 }
 
 /**
  * Transform stream: Voice Events → Voice Events (with Agent Responses)
  *
- * This function takes a stream of upstream voice agent events and processes them.
- * When an stt_output event arrives, it passes the transcript to the LangChain agent.
- * The agent streams back its response tokens as agent_chunk events.
- * Tool calls and results are also emitted as separate events.
- * All other upstream events are passed through unchanged.
- *
- * @param eventStream - An async iterator of upstream voice agent events
- * @returns Async generator yielding all upstream events plus agent_chunk, tool_call, and tool_result events
+ * Passes every upstream event through. On each turn.end (the user finished
+ * speaking) it sends the transcript to the LangChain agent and yields the
+ * reply as agent_chunk, tool_call and tool_result events, then agent_end.
  */
 async function* agentStream(
   eventStream: AsyncIterable<VoiceAgentEvent>
@@ -161,9 +146,12 @@ async function* agentStream(
   // using the checkpointer (MemorySaver) configured in the agent
   const threadId = uuidv4();
 
+  // TODO:@zeuslawyer barge-in handling to be added. While the agent replies
+  // below, this loop can't read the next event, so a turn.start that arrives
+  // mid-reply waits until the reply ends.
   for await (const event of eventStream) {
     yield event;
-    if (event.type === "stt_output") {
+    if (event.type === "turn.end" && event.transcript) {
       const stream = await agent.stream(
         { messages: [new HumanMessage(event.transcript)] },
         {

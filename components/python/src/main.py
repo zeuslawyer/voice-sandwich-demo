@@ -1,12 +1,14 @@
 import asyncio
 import contextlib
+import os
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
 
 import uvicorn
+from cartesia import AsyncCartesia
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
@@ -14,13 +16,14 @@ from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 
-from assemblyai_stt import AssemblyAISTT
-from components.python.src.cartesia_tts import CartesiaTTS
+from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
+from cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
     ToolCallEvent,
     ToolResultEvent,
+    TurnEvent,
     VoiceAgentEvent,
     event_to_dict,
 )
@@ -58,7 +61,7 @@ def confirm_order(order_summary: str) -> str:
     return f"Order confirmed: {order_summary}. Sending to kitchen."
 
 
-system_prompt = """
+system_prompt = f"""
 You are a helpful sandwich shop assistant. Your goal is to take the user's order.
 Be concise and friendly.
 
@@ -66,8 +69,10 @@ Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
 Available meats: turkey, ham, roast beef.
 Available cheeses: swiss, cheddar, provolone.
 
-${CARTESIA_TTS_SYSTEM_PROMPT}
+{CARTESIA_TTS_SYSTEM_PROMPT}
 """
+
+cartesia = AsyncCartesia(api_key=os.environ["CARTESIA_API_KEY"])
 
 agent = create_agent(
     model="anthropic:claude-haiku-4-5",
@@ -81,60 +86,38 @@ async def _stt_stream(
     audio_stream: AsyncIterator[bytes],
 ) -> AsyncIterator[VoiceAgentEvent]:
     """
-    Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
+    Transform stream: Audio (bytes) → Turn events, via Cartesia Ink 2.
 
-    This function takes a stream of audio chunks and sends them to AssemblyAI for STT.
-
-    It uses a producer-consumer pattern where:
-    - Producer: A background task reads audio chunks from audio_stream and sends
-      them to AssemblyAI via WebSocket. This runs concurrently with the consumer,
-      allowing transcription to begin before all audio has arrived.
-    - Consumer: The main coroutine receives transcription events from AssemblyAI
-      and yields them downstream. Events include both partial results (stt_chunk)
-      and final transcripts (stt_output).
-
-    Args:
-        audio_stream: Async iterator of PCM audio bytes (16-bit, mono, 16kHz)
-
-    Yields:
-        STT events (stt_chunk for partials, stt_output for final transcripts)
+    audio_stream: PCM audio from the browser (16-bit, mono, 16 kHz).
+    Yields a TurnEvent for each Ink 2 turn.* message (see events.TurnEvent).
     """
-    stt = AssemblyAISTT(sample_rate=16000)
+    async with cartesia.stt.auto_finalize.websocket(
+        model="ink-2", encoding="pcm_s16le", sample_rate=16000
+    ) as connection:
 
-    async def send_audio():
-        """
-        Background task that pumps audio chunks to AssemblyAI.
+        async def send_audio():
+            # Runs alongside the receive loop below, so transcripts arrive
+            # while the user is still talking.
+            try:
+                async for chunk in audio_stream:
+                    await connection.send_raw(chunk)
+            finally:
+                # Ask Ink 2 to finish any buffered audio. It closes the socket
+                # when done, which ends the receive loop.
+                await connection.send({"type": "close"})
 
-        This runs concurrently with the main coroutine, continuously reading
-        audio chunks from the input stream and forwarding them to AssemblyAI.
-        When the input stream ends, it signals completion by closing the
-        WebSocket connection.
-        """
+        send_task = asyncio.create_task(send_audio())
         try:
-            # Stream each audio chunk to AssemblyAI as it arrives
-            async for audio_chunk in audio_stream:
-                await stt.send_audio(audio_chunk)
+            async for event in connection:
+                if event.type.startswith("turn."):
+                    transcript = getattr(event, "transcript", "")
+                    yield TurnEvent.create(event.type, transcript)
+                elif event.type == "error":
+                    print(f"Ink 2 error: {event.message}")
         finally:
-            # Signal to AssemblyAI that audio streaming is complete
-            await stt.close()
-
-    # Launch the audio sending task in the background
-    # This allows us to simultaneously receive transcripts in the main coroutine
-    send_task = asyncio.create_task(send_audio())
-
-    try:
-        # Consumer loop: receive and yield transcription events as they arrive
-        # from AssemblyAI. The receive_events() method listens on the WebSocket
-        # for transcript events and yields them as they become available.
-        async for event in stt.receive_events():
-            yield event
-    finally:
-        # Cleanup: ensure the background task is cancelled and awaited
-        with contextlib.suppress(asyncio.CancelledError):
-            send_task.cancel()
-            await send_task
-        # Ensure the WebSocket connection is closed
-        await stt.close()
+            with contextlib.suppress(asyncio.CancelledError):
+                send_task.cancel()
+                await send_task
 
 
 async def _agent_stream(
@@ -143,34 +126,23 @@ async def _agent_stream(
     """
     Transform stream: Voice Events → Voice Events (with Agent Responses)
 
-    This function takes a stream of upstream voice agent events and processes them.
-    When an stt_output event arrives, it passes the transcript to the LangChain agent.
-    The agent streams back its response tokens as agent_chunk events.
-    Tool calls and results are also emitted as separate events.
-    All other upstream events are passed through unchanged.
-
-    The passthrough pattern ensures downstream stages (like TTS) can observe all
-    events in the pipeline, not just the ones this stage produces. This enables
-    features like displaying partial transcripts while the agent is thinking.
-
-    Args:
-        event_stream: An async iterator of upstream voice agent events
-
-    Yields:
-        All upstream events plus agent_chunk, tool_call, and tool_result events
+    Passes every upstream event through. On each turn.end (the user finished
+    speaking) it sends the transcript to the LangChain agent and yields the
+    reply as agent_chunk, tool_call and tool_result events, then agent_end.
     """
     # Generate a unique thread ID for this conversation session
     # This allows the agent to maintain conversation context across multiple turns
     # using the checkpointer (InMemorySaver) configured in the agent
     thread_id = str(uuid4())
 
-    # Process each event as it arrives from the upstream STT stage
+    # TODO:@zeuslawyer barge-in handling to be added. While the agent replies
+    # below, this loop can't read the next event, so a turn.start that arrives
+    # mid-reply waits until the reply ends.
     async for event in event_stream:
         # Pass through all events to downstream consumers
         yield event
 
-        # When we receive a final transcript, invoke the agent
-        if event.type == "stt_output":
+        if event.type == "turn.end" and event.transcript:
             # Stream the agent's response using LangChain's astream method.
             # stream_mode="messages" yields message chunks as they're generated.
             stream = agent.astream(
@@ -241,22 +213,26 @@ async def _tts_stream(
         Process upstream events, yielding them while sending text to Cartesia.
 
         This async generator serves two purposes:
-        1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
+        1. Pass through all upstream events (turn.*, agent_chunk, ...)
            so downstream consumers can observe the full event stream.
         2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
            This ensures the full response is sent at once for better TTS quality.
         """
         buffer: list[str] = []
-        async for event in event_stream:
-            # Pass through all events to downstream consumers
-            yield event
-            # Buffer agent text chunks
-            if event.type == "agent_chunk":
-                buffer.append(event.text)
-            # Send all buffered text to Cartesia when agent finishes
-            if event.type == "agent_end":
-                await tts.send_text("".join(buffer))
-                buffer = []
+        try:
+            async for event in event_stream:
+                # Pass through all events to downstream consumers
+                yield event
+                # Buffer agent text chunks
+                if event.type == "agent_chunk":
+                    buffer.append(event.text)
+                # Send all buffered text to Cartesia when agent finishes
+                if event.type == "agent_end":
+                    await tts.send_text("".join(buffer))
+                    buffer = []
+        finally:
+            # Ends tts.receive_events(); otherwise merge_async_iters waits forever.
+            await tts.close()
 
     try:
         # Merge the processed upstream events with TTS audio events
@@ -281,9 +257,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def websocket_audio_stream() -> AsyncIterator[bytes]:
         """Async generator that yields audio bytes from the websocket."""
-        while True:
-            data = await websocket.receive_bytes()
-            yield data
+        try:
+            while True:
+                yield await websocket.receive_bytes()
+        except WebSocketDisconnect:
+            # Browser closed: end the stream, so the STT stage tells Ink 2 to close.
+            return
 
     output_stream = pipeline.atransform(websocket_audio_stream())
 
