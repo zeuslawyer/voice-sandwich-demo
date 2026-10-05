@@ -45,3 +45,6 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Local agent files
+CLAUDE.local.md
