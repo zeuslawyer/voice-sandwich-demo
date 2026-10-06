@@ -194,9 +194,10 @@ async def _tts_stream(
     """
     Transform stream: Voice Events → Voice Events (with Audio), via Cartesia Sonic.
 
-    Passes every upstream event through. For each agent reply, sends the text
-    to Sonic and yields the speech as tts_chunk events (raw PCM, 24 kHz).
-    A Sonic "context" is one generation; we use one per agent reply.
+    Passes every upstream event through. Sends each agent_chunk to Sonic as it
+    arrives and yields the speech as tts_chunk events (raw PCM, 24 kHz), so
+    audio starts before agent_end. A Sonic "context" is one generation; we
+    use one per agent reply.
     """
     async with cartesia.tts.websocket_connect() as ws:
         # Sending and receiving run at the same time (merge_async_iters).
@@ -205,29 +206,34 @@ async def _tts_stream(
         contexts: asyncio.Queue = asyncio.Queue()
 
         async def forward_events_and_send_text() -> AsyncIterator[VoiceAgentEvent]:
-            buffer: list[str] = []
+            ctx = None  # the current reply's context
             try:
                 async for event in event_stream:
                     yield event
-                    if event.type == "agent_chunk":
-                        buffer.append(event.text)
-                    if event.type == "agent_end":
-                        text, buffer = "".join(buffer).strip(), []
-                        if not text:
-                            continue
-                        ctx = ws.context(
-                            model_id="sonic-3.6",
-                            voice=VOICE_ID,
-                            output_format={
-                                "container": "raw",
-                                "encoding": "pcm_s16le",
-                                "sample_rate": 24000,
-                            },
-                            language="en",
-                        )
-                        await contexts.put(ctx)
-                        await ctx.push(text)
+                    # Continuations: push each piece of text as it arrives.
+                    # Sonic joins the pieces as-is into one utterance.
+                    if event.type == "agent_chunk" and event.text:
+                        if ctx is None:
+                            ctx = ws.context(
+                                model_id="sonic-3.6",
+                                voice=VOICE_ID,
+                                output_format={
+                                    "container": "raw",
+                                    "encoding": "pcm_s16le",
+                                    "sample_rate": 24000,
+                                },
+                                language="en",
+                                # Longest wait (clock time) for more text before
+                                # Sonic speaks. 3000 is the documented default; set
+                                # explicitly as one docs page says no value = no wait.
+                                max_buffer_delay_ms=3000,
+                            )
+                            await contexts.put(ctx)
+                        await ctx.push(event.text)
+                    # No more text for this reply: Sonic speaks what it has.
+                    if event.type == "agent_end" and ctx is not None:
                         await ctx.no_more_inputs()
+                        ctx = None
             finally:
                 # Ends receive_audio; otherwise merge_async_iters waits forever.
                 await contexts.put(None)
