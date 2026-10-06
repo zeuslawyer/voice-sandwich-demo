@@ -19,6 +19,7 @@ export type ServerEvent =
       args: Record<string, unknown>;
     }
   | { type: "tool_result"; ts: number; name: string; result: string }
+  | { type: "agent_end"; ts: number }
   | { type: "tts_chunk"; audio: string; ts: number };
 
 // Session state

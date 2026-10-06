@@ -64,11 +64,15 @@ export function createVoiceSession(): VoiceSession {
         logs.log(`Tool result: ${event.result}`);
         break;
 
+      case "agent_end": {
+        // On agent_end, not the first tts_chunk: audio can start before the
+        // reply text is complete.
+        const { response } = get(currentTurn);
+        if (response) activities.add("agent", "Agent Response", response);
+        break;
+      }
+
       case "tts_chunk": {
-        const currentTurnState = get(currentTurn);
-        if (!currentTurnState.ttsStartTs && currentTurnState.response) {
-          activities.add("agent", "Agent Response", currentTurnState.response);
-        }
         currentTurn.ttsChunk(event.ts);
         audioPlayback.push(event.audio);
 
