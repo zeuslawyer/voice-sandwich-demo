@@ -16,7 +16,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import { CARTESIA_TTS_SYSTEM_PROMPT, CartesiaTTS } from "./cartesia";
+import { CARTESIA_TTS_SYSTEM_PROMPT } from "./cartesia";
 import Cartesia from "@cartesia/cartesia-js";
 import type { VoiceAgentEvent } from "./types";
 
@@ -77,6 +77,7 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 `;
 
 const cartesia = new Cartesia({ apiKey: process.env.CARTESIA_API_KEY });
+const VOICE_ID = "f6ff7c0c-e396-40a9-a70b-f7607edb6937";
 
 const agent = createAgent({
   model: "claude-haiku-4-5",
@@ -206,76 +207,77 @@ async function* agentStream(
 }
 
 /**
- * Transform stream: Voice Events → Voice Events (with Audio)
+ * Transform stream: Voice Events → Voice Events (with Audio), via Cartesia Sonic.
  *
- * This function takes a stream of upstream voice agent events and processes them.
- * When agent_chunk events arrive, it sends the text to ElevenLabs for TTS synthesis.
- * Audio is streamed back as tts_chunk events as it's generated.
- * All upstream events are passed through unchanged.
- *
- * It uses a producer-consumer pattern where:
- * - Producer: Reads events from eventStream, passes them through, and sends agent text to ElevenLabs
- * - Consumer: Receives audio chunks from ElevenLabs and yields them as tts_chunk events
- *
- * @param eventStream - An async iterator of upstream voice agent events
- * @returns Async generator yielding all upstream events plus tts_chunk events for synthesized audio
+ * Passes every upstream event through. For each agent reply, sends the text
+ * to Sonic and yields the speech as tts_chunk events (base64 PCM, 24 kHz).
+ * A Sonic "context" is one generation; we use one per agent reply.
  */
 async function* ttsStream(
   eventStream: AsyncIterable<VoiceAgentEvent>
 ): AsyncGenerator<VoiceAgentEvent> {
-  const tts = new CartesiaTTS({
-    voiceId: "f6ff7c0c-e396-40a9-a70b-f7607edb6937",
-  });
+  const ws = await cartesia.tts.websocket();
   const passthrough = writableIterator<VoiceAgentEvent>();
+  // The producer and consumer below run at the same time. This hands each
+  // reply's context from the producer to the consumer, in order.
+  const contexts = writableIterator<ReturnType<typeof ws.context>>();
 
-  /**
-   * Promise that reads events from the upstream stream and sends text to Cartesia.
-   *
-   * This runs concurrently with the consumer, continuously reading events
-   * from the upstream stream and forwarding agent text to Cartesia for synthesis.
-   * All events are passed through to the downstream via the passthrough iterator.
-   * This allows audio generation to begin before the agent has finished generating.
-   */
+  // Passes events through and sends each reply's text to Sonic.
   const producer = iife(async () => {
     try {
       let buffer: string[] = [];
       for await (const event of eventStream) {
-        // Pass through all events to downstream consumers
         passthrough.push(event);
-        // Send agent text chunks to Cartesia for synthesis
         if (event.type === "agent_chunk") {
           buffer.push(event.text);
         }
-        // Send all buffered text to Cartesia for synthesis
         if (event.type === "agent_end") {
-          await tts.sendText(buffer.join(""));
+          const text = buffer.join("").trim();
           buffer = [];
+          if (!text) continue;
+          const ctx = ws.context({
+            model_id: "sonic-3.6",
+            voice: VOICE_ID,
+            output_format: {
+              container: "raw",
+              encoding: "pcm_s16le",
+              sample_rate: 24000,
+            },
+            language: "en",
+          });
+          contexts.push(ctx);
+          await ctx.push({ transcript: text });
+          await ctx.no_more_inputs();
         }
       }
     } finally {
-      // Signal to Cartesia that text sending is complete
-      await tts.close();
+      // Ends the consumer's loop; otherwise it waits forever.
+      contexts.cancel();
     }
   });
 
-  /**
-   * Promise that receives audio events from Cartesia.
-   *
-   * This runs concurrently with the producer, listening for TTS audio chunks
-   * and pushing them into the passthrough iterator for downstream stages.
-   */
+  // Reads each reply's audio, in order.
   const consumer = iife(async () => {
-    for await (const event of tts.receiveEvents()) {
-      passthrough.push(event);
+    for await (const ctx of contexts) {
+      try {
+        for await (const e of ctx.receive()) {
+          if (e.type === "chunk") {
+            // e.data is base64, which is what the browser expects.
+            passthrough.push({ type: "tts_chunk", audio: e.data, ts: Date.now() });
+          }
+        }
+      } catch (err) {
+        console.error("Sonic error:", err);
+      }
     }
   });
+
+  void Promise.allSettled([producer, consumer]).then(() => passthrough.cancel());
 
   try {
-    // Yield events as they arrive from both producer (upstream) and consumer (TTS)
     yield* passthrough;
   } finally {
-    // Wait for the producer and consumer to complete when cleaning up
-    await Promise.all([producer, consumer]);
+    ws.close();
   }
 }
 
