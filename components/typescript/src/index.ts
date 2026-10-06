@@ -209,9 +209,10 @@ async function* agentStream(
 /**
  * Transform stream: Voice Events → Voice Events (with Audio), via Cartesia Sonic.
  *
- * Passes every upstream event through. For each agent reply, sends the text
- * to Sonic and yields the speech as tts_chunk events (base64 PCM, 24 kHz).
- * A Sonic "context" is one generation; we use one per agent reply.
+ * Passes every upstream event through. Sends each agent_chunk to Sonic as it
+ * arrives and yields the speech as tts_chunk events (base64 PCM, 24 kHz), so
+ * audio starts before agent_end. A Sonic "context" is one generation; we use
+ * one per agent reply.
  */
 async function* ttsStream(
   eventStream: AsyncIterable<VoiceAgentEvent>
@@ -222,32 +223,38 @@ async function* ttsStream(
   // reply's context from the producer to the consumer, in order.
   const contexts = writableIterator<ReturnType<typeof ws.context>>();
 
-  // Passes events through and sends each reply's text to Sonic.
+  // Passes events through and sends each reply's text to Sonic as it comes.
   const producer = iife(async () => {
     try {
-      let buffer: string[] = [];
+      let ctx: ReturnType<typeof ws.context> | undefined; // current reply
       for await (const event of eventStream) {
         passthrough.push(event);
-        if (event.type === "agent_chunk") {
-          buffer.push(event.text);
+        // Continuations: push each piece of text as it arrives.
+        // Sonic joins the pieces as-is into one utterance.
+        if (event.type === "agent_chunk" && event.text) {
+          if (!ctx) {
+            ctx = ws.context({
+              model_id: "sonic-3.6",
+              voice: VOICE_ID,
+              output_format: {
+                container: "raw",
+                encoding: "pcm_s16le",
+                sample_rate: 24000,
+              },
+              language: "en",
+              // Longest wait (clock time) for more text before Sonic speaks.
+              // 3000 is the documented default; set explicitly as one docs
+              // page says no value = no wait.
+              max_buffer_delay_ms: 3000,
+            });
+            contexts.push(ctx);
+          }
+          await ctx.push({ transcript: event.text });
         }
-        if (event.type === "agent_end") {
-          const text = buffer.join("").trim();
-          buffer = [];
-          if (!text) continue;
-          const ctx = ws.context({
-            model_id: "sonic-3.6",
-            voice: VOICE_ID,
-            output_format: {
-              container: "raw",
-              encoding: "pcm_s16le",
-              sample_rate: 24000,
-            },
-            language: "en",
-          });
-          contexts.push(ctx);
-          await ctx.push({ transcript: text });
+        // No more text for this reply: Sonic speaks what it has.
+        if (event.type === "agent_end" && ctx) {
           await ctx.no_more_inputs();
+          ctx = undefined;
         }
       }
     } finally {
