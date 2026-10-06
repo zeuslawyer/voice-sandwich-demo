@@ -160,9 +160,20 @@ async function* agentStream(
         }
       );
 
+      // Text after a tool call starts with no space ("for you." + "Your"),
+      // and the browser and TTS join chunks as-is. So we add one, but only
+      // if the reply already has text.
+      let hasText = false;
+      let afterTool = false;
       for await (const [message] of stream) {
         if (AIMessage.isInstance(message) && message.tool_calls) {
-          yield { type: "agent_chunk", text: message.text, ts: Date.now() };
+          let text = message.text;
+          if (afterTool && text) {
+            text = " " + text.trimStart();
+            afterTool = false;
+          }
+          hasText ||= text.length > 0;
+          yield { type: "agent_chunk", text, ts: Date.now() };
           for (const toolCall of message.tool_calls) {
             yield {
               type: "tool_call",
@@ -174,6 +185,7 @@ async function* agentStream(
           }
         }
         if (ToolMessage.isInstance(message)) {
+          afterTool = hasText;
           yield {
             type: "tool_result",
             toolCallId: message.tool_call_id ?? "",

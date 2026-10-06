@@ -153,11 +153,18 @@ async def _agent_stream(
 
             # Iterate through the agent's streaming response. The stream yields
             # tuples of (message, metadata), but we only need the message.
+            # Text after a tool call starts with no space ("for you." + "Your"),
+            # and the browser and TTS join chunks as-is. So we add one, but only
+            # if the reply already has text.
+            has_text = after_tool = False
             async for message, metadata in stream:
                 # Emit agent chunks (AI messages)
                 if isinstance(message, AIMessage):
-                    # Extract and yield the text content from each message chunk
-                    yield AgentChunkEvent.create(message.text)
+                    text = message.text
+                    if after_tool and text:
+                        text, after_tool = " " + text.lstrip(), False
+                    has_text = has_text or bool(text)
+                    yield AgentChunkEvent.create(text)
                     # Emit tool calls if present
                     if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:
@@ -169,6 +176,7 @@ async def _agent_stream(
 
                 # Emit tool results (tool messages)
                 if isinstance(message, ToolMessage):
+                    after_tool = has_text
                     yield ToolResultEvent.create(
                         tool_call_id=getattr(message, "tool_call_id", ""),
                         name=getattr(message, "name", "unknown"),
