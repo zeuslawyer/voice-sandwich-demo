@@ -1,6 +1,6 @@
 # Voice Sandwich Demo 🥪
 
-A real-time, voice-to-voice AI pipeline demo featuring a sandwich shop order assistant. Built with LangChain/LangGraph agents, Cartesia Ink 2 for speech-to-text, and Cartesia Sonic for text-to-speech.
+A real-time, voice-to-voice AI pipeline demo featuring a sandwich shop order assistant. Built with LangChain/LangGraph agents, Cartesia Ink 2 for speech-to-text, and Cartesia Sonic 3.6 for text-to-speech.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ flowchart LR
         subgraph Pipeline [Voice Agent Pipeline]
             direction LR
             STT[Cartesia Ink 2 STT] -->|Transcripts| Agent[LangChain Agent]
-            Agent -->|Text Chunks| TTS[Cartesia TTS]
+            Agent -->|Text Chunks| TTS[Cartesia Sonic 3.6 TTS]
         end
 
         Pipeline -->|Events| WS_Sender[WS Sender]
@@ -35,7 +35,7 @@ Each stage is an async generator that transforms a stream of events:
 
 1. **STT Stage** (`sttStream`): Streams audio to Cartesia Ink 2, yields its turn events (`turn.start`, `turn.update`, `turn.end`, ...)
 2. **Agent Stage** (`agentStream`): Passes upstream events through, invokes LangChain agent on each `turn.end`, yields agent responses (`agent_chunk`, `tool_call`, `tool_result`, `agent_end`)
-3. **TTS Stage** (`ttsStream`): Passes upstream events through, sends agent text to Cartesia, yields audio events (`tts_chunk`)
+3. **TTS Stage** (`ttsStream`): Passes upstream events through, streams each `agent_chunk` to Cartesia Sonic as it arrives (one context per reply, with continuations), yields audio events (`tts_chunk`). Voice starts before the agent finishes its reply.
 
 ### Event sequence (one turn)
 
@@ -80,23 +80,26 @@ sequenceDiagram
     STT->>B: turn.end → currentTurn.sttEnd(), activities.add("stt")
 
     A->>A: agent.stream / agent.astream (LangChain + Claude)
-    loop each piece of reply text
-        A->>T: agent_chunk {text} → buffer.push / buffer.append
-        A->>B: agent_chunk → currentTurn.agentChunk()
+    par Agent stage writes the reply
+        loop each piece of reply text
+            A->>B: agent_chunk {text} → currentTurn.agentChunk()
+            A->>T: agent_chunk {text}
+            T->>SON: ctx.push {transcript, continue: true} (first chunk opens the reply's context, ws.context)
+        end
+        opt agent uses a tool (runs on the server)
+            A->>B: tool_call {name, args} → activities.add("tool")
+            A->>B: tool_result {name, result} → activities.add("tool")
+        end
+        A->>B: agent_end → activities.add("agent", "Agent Response")
+        A->>T: agent_end
+        T->>SON: ctx.no_more_inputs {transcript: "", continue: false}
+    and Sonic speaks while text still arrives (managed buffering, max_buffer_delay_ms 3000)
+        loop audio arrives (ctx.receive)
+            SON-->>T: chunk {data = base64 audio}
+            T->>B: tts_chunk {audio} → audioPlayback.push(), currentTurn.ttsChunk()
+        end
+        SON-->>T: done
     end
-    opt agent uses a tool (runs on the server)
-        A->>B: tool_call {name, args} → activities.add("tool")
-        A->>B: tool_result {name, result} → activities.add("tool")
-    end
-    A->>T: agent_end
-    A->>B: agent_end (no case, ignored)
-
-    T->>SON: sendText / send_text (whole buffer + context_id)
-    loop audio arrives
-        SON-->>T: message {data = base64 audio}
-        T->>B: tts_chunk {audio} → audioPlayback.push(), currentTurn.ttsChunk()
-    end
-    SON-->>T: message {done = true}
     B->>B: 300 ms after last tts_chunk → finishTurn()
 
     Note over B,SON: Stop button
@@ -168,12 +171,12 @@ components/
 ├── typescript/          # Node.js backend
 │   └── src/
 │       ├── index.ts     # Main server & pipeline
-│       ├── cartesia/    # Cartesia TTS client (STT uses the Cartesia SDK in index.ts)
+│       ├── cartesia/    # TTS system prompt (STT and TTS use the Cartesia SDK in index.ts)
 │       └── elevenlabs/  # Alternate TTS client
 └── python/              # Python backend
     └── src/
         ├── main.py             # Main server & pipeline
-        ├── cartesia_tts.py
+        ├── cartesia_prompts.py # TTS system prompt
         ├── elevenlabs_tts.py   # Alternate TTS client
         └── events.py           # Event type definitions
 ```
@@ -182,11 +185,11 @@ components/
 
 The pipeline communicates via a unified event stream:
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `turn.*` | STT → Client, Agent | Cartesia Ink 2 turn events: `turn.start`, `turn.update` (transcript so far), `turn.eager_end`, `turn.resume`, `turn.end` (final transcript, triggers the agent) |
-| `agent_chunk` | Agent → TTS | Text chunk from agent response |
-| `tool_call` | Agent → Client | Tool invocation |
-| `tool_result` | Agent → Client | Tool execution result |
-| `agent_end` | Agent → TTS | Signals end of agent turn |
-| `tts_chunk` | TTS → Client | Audio chunk for playback |
+| Event | Made by | Used by | Description |
+|-------|---------|---------|-------------|
+| `turn.*` | STT stage | Agent stage (`turn.end`), browser | Cartesia Ink 2 turn events: `turn.start`, `turn.update` (transcript so far), `turn.eager_end`, `turn.resume`, `turn.end` (final transcript, triggers the agent) |
+| `agent_chunk` | Agent stage | TTS stage, browser | Text chunk from agent response |
+| `tool_call` | Agent stage | browser | Tool invocation |
+| `tool_result` | Agent stage | browser | Tool execution result |
+| `agent_end` | Agent stage | TTS stage, browser | End of the agent's reply |
+| `tts_chunk` | TTS stage | browser | Audio chunk for playback |
