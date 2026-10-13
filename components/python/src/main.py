@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import contextlib
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
@@ -25,7 +27,6 @@ from events import (
     TTSChunkEvent,
     TurnEvent,
     VoiceAgentEvent,
-    event_to_dict,
 )
 from utils import merge_async_iters
 
@@ -112,7 +113,7 @@ async def _stt_stream(
             async for event in connection:
                 if event.type.startswith("turn."):
                     transcript = getattr(event, "transcript", "")
-                    yield TurnEvent.create(event.type, transcript)
+                    yield TurnEvent(type=event.type, transcript=transcript)
                 elif event.type == "error":
                     print(f"Ink 2 error: {event.message}")
         finally:
@@ -165,11 +166,11 @@ async def _agent_stream(
                     if after_tool and text:
                         text, after_tool = " " + text.lstrip(), False
                     has_text = has_text or bool(text)
-                    yield AgentChunkEvent.create(text)
+                    yield AgentChunkEvent(text=text)
                     # Emit tool calls if present
                     if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:
-                            yield ToolCallEvent.create(
+                            yield ToolCallEvent(
                                 id=tool_call.get("id", str(uuid4())),
                                 name=tool_call.get("name", "unknown"),
                                 args=tool_call.get("args", {}),
@@ -178,14 +179,14 @@ async def _agent_stream(
                 # Emit tool results (tool messages)
                 if isinstance(message, ToolMessage):
                     after_tool = has_text
-                    yield ToolResultEvent.create(
-                        tool_call_id=getattr(message, "tool_call_id", ""),
+                    yield ToolResultEvent(
+                        toolCallId=getattr(message, "tool_call_id", ""),
                         name=getattr(message, "name", "unknown"),
                         result=str(message.content) if message.content else "",
                     )
 
             # Signal that the agent has finished responding for this turn
-            yield AgentEndEvent.create()
+            yield AgentEndEvent()
 
 
 async def _tts_stream(
@@ -242,7 +243,9 @@ async def _tts_stream(
             while (ctx := await contexts.get()) is not None:
                 async for response in ctx.receive():
                     if response.type == "chunk" and response.audio:
-                        yield TTSChunkEvent.create(response.audio)
+                        yield TTSChunkEvent(
+                            audio=base64.b64encode(response.audio).decode()
+                        )
                     elif response.type == "error":
                         print(f"Sonic error: {response.message}")
 
@@ -276,7 +279,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Process all events from the pipeline, sending events back to the client
     async for event in output_stream:
-        await websocket.send_json(event_to_dict(event))
+        await websocket.send_json(asdict(event))
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
