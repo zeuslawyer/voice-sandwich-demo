@@ -64,6 +64,11 @@
         style: getBarStyle(baseTime, totalDuration, data.sttStartTs, data.sttEndTs, isActive && !!data.sttStartTs && !data.sttEndTs),
         duration: getDuration(data.sttStartTs, data.sttEndTs, isActive && !!data.sttStartTs && !data.sttEndTs),
       },
+      // Time to first token: from turn.end (the LLM starts) to the first agent_chunk.
+      ttft: {
+        style: getBarStyle(baseTime, totalDuration, data.sttEndTs, data.agentStartTs, isActive && !!data.sttEndTs && !data.agentStartTs),
+        duration: getDuration(data.sttEndTs, data.agentStartTs, isActive && !!data.sttEndTs && !data.agentStartTs),
+      },
       agent: {
         style: getBarStyle(baseTime, totalDuration, data.agentStartTs, data.agentEndTs, isActive && !!data.agentStartTs && !data.agentEndTs),
         duration: getDuration(data.agentStartTs, data.agentEndTs, isActive && !!data.agentStartTs && !data.agentEndTs),
@@ -100,6 +105,7 @@
     {#if bars}
       {#each [
         { label: 'STT', bar: bars.stt, gradient: 'from-cyan-400 to-emerald-500' },
+        { label: 'TTFT', bar: bars.ttft, gradient: 'from-pink-500 to-rose-500' },
         { label: 'Agent', bar: bars.agent, gradient: 'from-purple-500 to-violet-600' },
         { label: 'TTS', bar: bars.tts, gradient: 'from-orange-500 to-orange-600' },
       ] as row}
