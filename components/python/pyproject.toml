@@ -11,12 +11,7 @@ dependencies = [
     "langgraph>=1.0.4",
     "python-dotenv",
     "uvicorn>=0.38.0",
-    "websockets",
 ]
-
-[project.optional-dependencies]
-elevenlabs = ["elevenlabs"]
-anthropic = ["langchain-anthropic"]
 
 [dependency-groups]
 dev = [

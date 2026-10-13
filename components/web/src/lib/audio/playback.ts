@@ -1,4 +1,4 @@
-// Sample rate of audio from ElevenLabs (pcm_24000 format)
+// Sample rate of Sonic audio (pcm_s16le, 24 kHz; set in the TTS stage)
 const SAMPLE_RATE = 24000;
 
 export interface AudioPlayback {

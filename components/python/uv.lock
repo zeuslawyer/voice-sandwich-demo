@@ -207,23 +207,6 @@ wheels = [
 ]
 
 [[package]]
-name = "elevenlabs"
-version = "2.24.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-core" },
-    { name = "requests" },
-    { name = "typing-extensions" },
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/48/b8/7ef371670766a09169969531bd9cfb6c3bfebe55ae479d2f009cfff4b2f7/elevenlabs-2.24.0.tar.gz", hash = "sha256:bd5278ea8521aeb463ef4649192b5aa8cedf12be7f9b3ca19c79331a7d33d305", size = 418072, upload-time = "2025-11-21T09:15:34.916Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/52/a21ebfa6a2cadeb3b234a4bd92a59809fbbcbb6024ee2e48774f30daf8cf/elevenlabs-2.24.0-py3-none-any.whl", hash = "sha256:b8d0435f84a3bc0592dd086b4945bd79d9430c6892bf3f75752c03bb53ae3ad6", size = 1121523, upload-time = "2025-11-21T09:15:31.77Z" },
-]
-
-[[package]]
 name = "fastapi"
 version = "0.137.2"
 source = { registry = "https://pypi.org/simple" }
@@ -789,15 +772,6 @@ dependencies = [
     { name = "langgraph" },
     { name = "python-dotenv" },
     { name = "uvicorn" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-anthropic = [
-    { name = "langchain-anthropic" },
-]
-elevenlabs = [
-    { name = "elevenlabs" },
 ]
 
 [package.dev-dependencies]
@@ -809,18 +783,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cartesia", extras = ["websockets"], specifier = "==4.2.0" },
-    { name = "elevenlabs", marker = "extra == 'elevenlabs'" },
     { name = "fastapi", specifier = ">=0.123.5" },
     { name = "langchain" },
     { name = "langchain-anthropic", specifier = ">=1.2.0" },
-    { name = "langchain-anthropic", marker = "extra == 'anthropic'" },
     { name = "langchain-core", specifier = ">=1.4.0" },
     { name = "langgraph", specifier = ">=1.0.4" },
     { name = "python-dotenv" },
     { name = "uvicorn", specifier = ">=0.38.0" },
-    { name = "websockets" },
 ]
-provides-extras = ["elevenlabs", "anthropic"]
 
 [package.metadata.requires-dev]
 dev = [
