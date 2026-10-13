@@ -21,32 +21,6 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-@dataclass
-class UserInputEvent:
-    """
-    Event emitted when raw audio data is received from the user.
-
-    This is the entry point of the voice agent pipeline. Audio should be
-    in PCM format (16-bit, mono, 16kHz) for optimal processing by the STT stage.
-    """
-
-    type: Literal["user_input"]
-
-    audio: bytes
-    """
-    Raw PCM audio bytes from the user's microphone.
-    Expected format: 16-bit signed integer, mono channel, 16kHz sample rate.
-    """
-
-    ts: int
-    """Unix timestamp (milliseconds since epoch) when the event was created."""
-
-    @classmethod
-    def create(cls, audio: bytes) -> "UserInputEvent":
-        """Factory method to create a UserInputEvent event with current timestamp."""
-        return cls(type="user_input", audio=audio, ts=_now_ms())
-
-
 TurnType = Literal[
     "turn.start", "turn.update", "turn.eager_end", "turn.resume", "turn.end"
 ]
@@ -227,14 +201,12 @@ class TTSChunkEvent:
         return cls(type="tts_chunk", audio=audio, ts=_now_ms())
 
 
-VoiceAgentEvent = Union[UserInputEvent, TurnEvent, AgentEvent, TTSChunkEvent]
+VoiceAgentEvent = Union[TurnEvent, AgentEvent, TTSChunkEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
     """Convert a VoiceAgentEvent to a JSON-serializable dictionary."""
-    if isinstance(event, UserInputEvent):
-        return {"type": event.type, "ts": event.ts}
-    elif isinstance(event, TurnEvent):
+    if isinstance(event, TurnEvent):
         return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
     elif isinstance(event, AgentChunkEvent):
         return {"type": event.type, "text": event.text, "ts": event.ts}

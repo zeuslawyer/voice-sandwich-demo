@@ -37,10 +37,6 @@ function createTurnStore() {
       update((t) => ({ ...t, transcript }));
     },
 
-    agentStart(ts: number) {
-      update((t) => ({ ...t, agentStartTs: t.agentStartTs ?? ts }));
-    },
-
     agentChunk(ts: number, text: string) {
       update((t) => ({
         ...t,
@@ -48,10 +44,6 @@ function createTurnStore() {
         agentEndTs: ts,
         response: t.response + text,
       }));
-    },
-
-    ttsStart(ts: number) {
-      update((t) => ({ ...t, ttsStartTs: t.ttsStartTs ?? ts }));
     },
 
     ttsChunk(ts: number) {

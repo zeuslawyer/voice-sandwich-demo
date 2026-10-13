@@ -20,22 +20,6 @@ export namespace VoiceAgentEvent {
   }
 
   /**
-   * Event emitted when raw audio data is received from the user.
-   *
-   * This is the entry point of the voice agent pipeline. Audio should be
-   * in PCM format (16-bit, mono, 16kHz) for optimal processing by the STT stage.
-   */
-  export interface UserInput extends BaseEvent {
-    readonly type: "user_input";
-
-    /**
-     * Raw PCM audio bytes from the user's microphone.
-     * Expected format: 16-bit signed integer, mono channel, 16kHz sample rate.
-     */
-    audio: Uint8Array;
-  }
-
-  /**
    * One turn event from Cartesia Ink 2 speech-to-text, passed to the browser as-is.
    *
    * A "turn" is one stretch of the user talking. Ink 2 detects it and emits:
@@ -178,9 +162,6 @@ export namespace VoiceAgentEvent {
  * ```typescript
  * function handleEvent(event: VoiceAgentEvent) {
  *   switch (event.type) {
- *     case "user_input":
- *       processAudio(event.audio);
- *       break;
  *     case "turn.end":
  *       sendToAgent(event.transcript);
  *       break;
@@ -190,7 +171,6 @@ export namespace VoiceAgentEvent {
  * ```
  */
 export type VoiceAgentEvent =
-  | VoiceAgentEvent.UserInput
   | VoiceAgentEvent.TurnEvent
   | VoiceAgentEvent.AgentEvent
   | VoiceAgentEvent.TTSChunk;
