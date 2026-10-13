@@ -172,12 +172,11 @@ components/
 │   └── src/
 │       ├── index.ts     # Main server & pipeline
 │       ├── cartesia/    # TTS system prompt (STT and TTS use the Cartesia SDK in index.ts)
-│       └── elevenlabs/  # Alternate TTS client
+│       └── types.ts     # Event type definitions
 └── python/              # Python backend
     └── src/
         ├── main.py             # Main server & pipeline
         ├── cartesia_prompts.py # TTS system prompt
-        ├── elevenlabs_tts.py   # Alternate TTS client
         └── events.py           # Event type definitions
 ```
 
